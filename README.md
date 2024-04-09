@@ -1,2 +1,3 @@
-# .github
-public rckt. corp repo
+# rckt corp.
+
+[Contact us](support@rckt.tech).
