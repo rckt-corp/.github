@@ -11,7 +11,7 @@ Everything here starts with a simple idea and ends with something that runs in p
 ### [Buzzy](https://joinbuzzy.com)
 Credit monitoring and financial health platform. Track your credit score, report rent payments, and build better credit.
 
-### [Codea](https://codea.app)
+### [Codae](https://codae.app)
 macOS app for managing AI agent workspaces. Run Claude Code, Cursor Agent, and Codex CLI in persistent remote workspaces — scheduled, automated, and running while you sleep.
 
 ## Tools
