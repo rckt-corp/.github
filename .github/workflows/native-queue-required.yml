@@ -1,0 +1,65 @@
+---
+# Org-required workflow selected from this repository's protected main.
+# New repositories stay blocked until their target branch has a native queue.
+# Public source supports both public and private organization repositories.
+# Organization rulesets must select this definition from protected main.
+# Inline read-only code never checks out or executes candidate code.
+name: Native queue required
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  queue:
+    # GitHub requires a job conditional for cross-repository PR injection.
+    if: true
+    name: Native queue required
+    runs-on: rckt-arc-lite
+    timeout-minutes: 10
+    steps:
+      - name: Require native queue configuration
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const fail = message => { throw new Error(message); };
+            let branch;
+            if (context.eventName === 'pull_request') {
+              const base = context.payload.pull_request?.base;
+              if (base?.repo?.full_name !== `${owner}/${repo}`) fail('Invalid PR base repository.');
+              branch = base.ref;
+            } else if (context.eventName === 'merge_group') {
+              const ref = context.payload.merge_group?.base_ref;
+              if (typeof ref !== 'string' || !ref.startsWith('refs/heads/')) fail('Invalid queue base ref.');
+              branch = ref.slice('refs/heads/'.length);
+            } else {
+              fail('Unsupported queue policy event.');
+            }
+            if (owner !== 'rckt-corp' || typeof branch !== 'string' || !branch) {
+              fail('Missing organization or target branch identity.');
+            }
+            const result = await github.graphql(`
+              query($owner: String!, $repo: String!, $branch: String!) {
+                repository(owner: $owner, name: $repo) {
+                  nameWithOwner
+                  defaultBranchRef { name }
+                  mergeQueue(branch: $branch) {
+                    configuration { mergingStrategy mergeMethod }
+                  }
+                }
+              }`, {owner, repo, branch});
+            const repository = result.repository;
+            if (repository?.nameWithOwner !== `${owner}/${repo}` ||
+                repository.defaultBranchRef?.name !== branch) {
+              fail('Cannot verify the repository default branch.');
+            }
+            const configuration = repository.mergeQueue?.configuration;
+            if (configuration?.mergingStrategy !== 'ALLGREEN' || configuration.mergeMethod !== 'SQUASH') {
+              fail('Configure an ALLGREEN/SQUASH native merge queue on the default branch before merging.');
+            }
+            core.info(`Native queue configured for ${owner}/${repo}:${branch}.`);
