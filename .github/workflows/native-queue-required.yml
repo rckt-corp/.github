@@ -45,23 +45,30 @@ jobs:
             if (owner !== 'rckt-corp' || typeof branch !== 'string' || !branch) {
               fail('Missing organization or target branch identity.');
             }
-            const result = await github.graphql(`
-              query($owner: String!, $repo: String!, $branch: String!) {
-                repository(owner: $owner, name: $repo) {
-                  nameWithOwner
-                  defaultBranchRef { name }
-                  mergeQueue(branch: $branch) {
-                    configuration { mergingStrategy mergeMethod }
-                  }
-                }
-              }`, {owner, repo, branch});
-            const repository = result.repository;
-            if (repository?.nameWithOwner !== `${owner}/${repo}` ||
-                repository.defaultBranchRef?.name !== branch) {
+            const {data: repository} = await github.rest.repos.get({owner, repo});
+            if (repository?.full_name !== `${owner}/${repo}` ||
+                repository.default_branch !== branch) {
               fail('Cannot verify the repository default branch.');
             }
-            const configuration = repository.mergeQueue?.configuration;
-            if (configuration?.mergingStrategy !== 'ALLGREEN' || configuration.mergeMethod !== 'SQUASH') {
+            // Effective active rules include repository and organization policies.
+            // This endpoint needs only Metadata: read, unlike mergeQueue.configuration.
+            let queueRules = 0;
+            for await (const {data: rules} of github.paginate.iterator(
+              'GET /repos/{owner}/{repo}/rules/branches/{branch}',
+              {owner, repo, branch, per_page: 100}
+            )) {
+              if (!Array.isArray(rules)) fail('Invalid effective branch rules response.');
+              for (const rule of rules) {
+                if (!rule || typeof rule.type !== 'string') fail('Invalid effective branch rule.');
+                if (rule.type !== 'merge_queue') continue;
+                queueRules += 1;
+                const configuration = rule.parameters;
+                if (configuration?.grouping_strategy !== 'ALLGREEN' || configuration.merge_method !== 'SQUASH') {
+                  fail('Configure an ALLGREEN/SQUASH native merge queue on the default branch before merging.');
+                }
+              }
+            }
+            if (queueRules === 0) {
               fail('Configure an ALLGREEN/SQUASH native merge queue on the default branch before merging.');
             }
             core.info(`Native queue configured for ${owner}/${repo}:${branch}.`);
