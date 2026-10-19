@@ -71,3 +71,17 @@ test('public source remains a pinned read-only workflow with cross-repository in
   assert(!workflow.includes('secrets.'));
   assert(!workflow.includes(': write'));
 });
+
+test('public consumers use hosted isolation and private consumers use ARC for both events', () => {
+  const expression = workflow.match(/    runs-on: \$\{\{ (.+) \}\}/)?.[1];
+  assert.equal(expression, "github.event.repository.private && 'rckt-arc-lite' || 'ubuntu-latest'");
+  const route = new Function('github', `return (${expression});`);
+  for (const eventName of ['pull_request', 'merge_group']) {
+    for (const isPrivate of [false, undefined]) {
+      const event = {repository: {private: isPrivate},
+        pull_request: {head: {repo: {private: true}}}};
+      assert.equal(route({event, event_name: eventName}), 'ubuntu-latest');
+    }
+    assert.equal(route({event: {repository: {private: true}}, event_name: eventName}), 'rckt-arc-lite');
+  }
+});

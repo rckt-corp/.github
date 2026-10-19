@@ -19,7 +19,9 @@ jobs:
     # GitHub requires a job conditional for cross-repository PR injection.
     if: true
     name: Native queue required
-    runs-on: rckt-arc-lite
+    # Public repositories cannot access the organization's private runner groups.
+    # The repository visibility is supplied by GitHub for the consuming event.
+    runs-on: ${{ github.event.repository.private && 'rckt-arc-lite' || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - name: Require native queue configuration
