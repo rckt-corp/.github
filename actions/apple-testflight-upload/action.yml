@@ -1,0 +1,108 @@
+name: Upload Apple build to TestFlight
+description: Validate and upload a signed iOS IPA or macOS PKG, then wait for Apple's processing result.
+
+inputs:
+  app-path:
+    description: Path to the signed .ipa or .pkg produced by the caller's build job.
+    required: true
+  app-type:
+    description: Apple platform for this build (ios or macos).
+    required: true
+  backend:
+    description: Upload backend. Use appstore-api for iOS and altool for macOS packages.
+    required: true
+  issuer-id:
+    description: App Store Connect API issuer ID.
+    required: true
+  api-key-id:
+    description: App Store Connect API key ID.
+    required: true
+  api-private-key:
+    description: Contents of the App Store Connect API .p8 private key.
+    required: true
+  wait-for-processing:
+    description: Wait until App Store Connect finishes processing the uploaded build.
+    required: false
+    default: "true"
+  uses-non-exempt-encryption:
+    description: Optional Boolean string to set App Store Connect encryption metadata.
+    required: false
+  upload-attempts:
+    description: Fresh upload attempts for the altool backend when the upload stalls.
+    required: false
+    default: "2"
+  upload-timeout-minutes:
+    description: Optional per-attempt timeout for the altool backend.
+    required: false
+
+outputs:
+  upload-backend:
+    description: Backend that performed the upload.
+    value: ${{ steps.upload.outputs.upload-backend }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate artifact and upload settings
+      shell: bash
+      env:
+        APP_PATH: ${{ inputs.app-path }}
+        APP_TYPE: ${{ inputs.app-type }}
+        BACKEND: ${{ inputs.backend }}
+        ISSUER_ID: ${{ inputs.issuer-id }}
+        API_KEY_ID: ${{ inputs.api-key-id }}
+        API_PRIVATE_KEY: ${{ inputs.api-private-key }}
+        WAIT_FOR_PROCESSING: ${{ inputs.wait-for-processing }}
+      run: |
+        set -euo pipefail
+
+        if [[ ! -f "$APP_PATH" ]]; then
+          echo "::error::Apple upload artifact not found: $APP_PATH"
+          exit 1
+        fi
+        if [[ -z "$ISSUER_ID" || -z "$API_KEY_ID" || -z "$API_PRIVATE_KEY" ]]; then
+          echo "::error::App Store Connect issuer ID, key ID, and private key are required."
+          exit 1
+        fi
+        if [[ "$WAIT_FOR_PROCESSING" != "true" && "$WAIT_FOR_PROCESSING" != "false" ]]; then
+          echo "::error::wait-for-processing must be true or false."
+          exit 1
+        fi
+
+        case "$APP_TYPE:$BACKEND:$APP_PATH" in
+          ios:appstore-api:*.ipa|ios:altool:*.ipa|ios:transporter:*.ipa)
+            ;;
+          macos:altool:*.pkg|macos:transporter:*.pkg)
+            ;;
+          ios:appstore-api:*|ios:altool:*|ios:transporter:*)
+            echo "::error::iOS TestFlight uploads require a .ipa file."
+            exit 1
+            ;;
+          macos:altool:*|macos:transporter:*)
+            echo "::error::Mac App Store TestFlight uploads require a .pkg file."
+            exit 1
+            ;;
+          macos:appstore-api:*)
+            echo "::error::The App Store API backend does not upload macOS .pkg files; use altool or transporter."
+            exit 1
+            ;;
+          *)
+            echo "::error::Unsupported app-type/backend combination: $APP_TYPE/$BACKEND."
+            exit 1
+            ;;
+        esac
+
+    - name: Upload to TestFlight
+      id: upload
+      uses: Apple-Actions/upload-testflight-build@155ea93be9ee6d5186c71f660a612f5eddb14510 # v5.6.0
+      with:
+        app-path: ${{ inputs.app-path }}
+        app-type: ${{ inputs.app-type }}
+        backend: ${{ inputs.backend }}
+        issuer-id: ${{ inputs.issuer-id }}
+        api-key-id: ${{ inputs.api-key-id }}
+        api-private-key: ${{ inputs.api-private-key }}
+        wait-for-processing: ${{ inputs.wait-for-processing }}
+        uses-non-exempt-encryption: ${{ inputs.uses-non-exempt-encryption }}
+        upload-attempts: ${{ inputs.upload-attempts }}
+        upload-timeout-minutes: ${{ inputs.upload-timeout-minutes }}
