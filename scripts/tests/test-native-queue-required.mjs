@@ -7,17 +7,21 @@ const workflow = readFileSync(new URL('../../.github/workflows/native-queue-requ
 const code = workflow.split('          script: |\n')[1].split('\n').map(line => line.slice(12)).join('\n');
 const execute = new (Object.getPrototypeOf(async function () {}).constructor)('github', 'context', 'core', code);
 function fixture(branch = 'main') {
-  const repository = {nameWithOwner: 'rckt-corp/example', defaultBranchRef: {name: branch},
-    mergeQueue: {configuration: {mergingStrategy: 'ALLGREEN', mergeMethod: 'SQUASH'}}};
+  const repository = {full_name: 'rckt-corp/example', default_branch: branch};
+  const rules = [{type: 'merge_queue', parameters: {grouping_strategy: 'ALLGREEN', merge_method: 'SQUASH'}}];
   const context = {repo: {owner: 'rckt-corp', repo: 'example'}, eventName: 'pull_request',
     payload: {pull_request: {base: {ref: branch, repo: {full_name: 'rckt-corp/example'}}},
       merge_group: {base_ref: `refs/heads/${branch}`}}};
-  const state = {repository, calls: []};
-  const github = {graphql: async (query, variables) => {
-    assert(!query.includes('mutation'), 'Gate must remain read-only');
-    state.calls.push(variables);
-    return {repository: state.repository};
-  }};
+  const state = {repository, rules, calls: []};
+  const github = {
+    rest: {repos: {get: async () => ({data: state.repository})}},
+    paginate: {iterator: async function* (route, {owner, repo, branch, per_page}) {
+      assert.equal(route, 'GET /repos/{owner}/{repo}/rules/branches/{branch}', 'Gate must remain read-only');
+      assert.equal(per_page, 100);
+      state.calls.push({owner, repo, branch});
+      yield {data: state.rules};
+    }},
+  };
   return {state, context, github, run: () => execute(github, context, {info() {}})};
 }
 test('configured queues pass PR and merge-group gates without requiring queue entries', async () => {
@@ -32,19 +36,19 @@ test('default branches are queried from event data without hardcoding main', asy
   assert(f.state.calls.every(call => call.branch === 'release/current'));
 });
 test('new repositories without a native queue and incompatible configurations fail closed', async () => {
-  for (const mutate of [f => f.state.repository.mergeQueue = null,
-    f => f.state.repository.mergeQueue = {},
-    f => f.state.repository.mergeQueue.configuration.mergingStrategy = 'HEADGREEN',
-    f => f.state.repository.mergeQueue.configuration.mergeMethod = 'MERGE',
-    f => f.state.repository.mergeQueue.configuration.mergeMethod = 'REBASE']) {
+  for (const mutate of [f => f.state.rules = [],
+    f => f.state.rules[0].parameters = {},
+    f => f.state.rules[0].parameters.grouping_strategy = 'HEADGREEN',
+    f => f.state.rules[0].parameters.merge_method = 'MERGE',
+    f => f.state.rules[0].parameters.merge_method = 'REBASE']) {
     const f = fixture(); mutate(f); await assert.rejects(f.run, /ALLGREEN\/SQUASH/);
   }
 });
 test('incomplete repository/default-branch API responses cannot authorize merging', async () => {
   for (const mutate of [f => f.state.repository = null,
-    f => f.state.repository.defaultBranchRef = null,
-    f => f.state.repository.defaultBranchRef.name = 'other',
-    f => f.state.repository.nameWithOwner = 'rckt-corp/other']) {
+    f => f.state.repository.default_branch = null,
+    f => f.state.repository.default_branch = 'other',
+    f => f.state.repository.full_name = 'rckt-corp/other']) {
     const f = fixture(); mutate(f); await assert.rejects(f.run, /default branch/);
   }
 });
@@ -58,7 +62,7 @@ test('wrong event, missing branch, foreign organization or foreign PR base canno
   }
 });
 test('API denial cannot produce a successful policy check', async () => {
-  const f = fixture(); f.github.graphql = async () => {throw new Error('API denied');};
+  const f = fixture(); f.github.rest.repos.get = async () => {throw new Error('API denied');};
   await assert.rejects(f.run, /API denied/);
 });
 
